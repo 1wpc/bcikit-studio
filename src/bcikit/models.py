@@ -9,7 +9,7 @@ from enum import StrEnum
 import numpy as np
 from numpy.typing import NDArray
 
-from .protocol import FLAG_DROPPED_BEFORE, SampleFrame
+from .protocol import FLAG_DROPPED_BEFORE, GAIN_BY_CODE, SampleFrame
 
 
 class SessionState(StrEnum):
@@ -30,6 +30,7 @@ class SessionConfig:
     profile: int = 0
     channel_mask: int = 0xFF
     output_format: int = 0
+    gain_code: int = 6
 
     def __post_init__(self) -> None:
         if not 1 <= self.board_count <= 4:
@@ -40,6 +41,8 @@ class SessionConfig:
             raise ValueError("profile must be in 0..3")
         if not 0 <= self.channel_mask <= 0xFF:
             raise ValueError("channel_mask must be a uint8")
+        if self.gain_code not in GAIN_BY_CODE:
+            raise ValueError("gain_code must be in 0..6")
 
 
 @dataclass

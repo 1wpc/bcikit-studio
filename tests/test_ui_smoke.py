@@ -58,7 +58,8 @@ def test_connection_page_configures_dynamic_multiboard_live_workspace(qtbot):
 
     home.board_combo.setCurrentIndex(3)
     home.sample_rate_combo.setCurrentIndex(1)
-    assert home.connection_options() == (4, 500)
+    home.gain_combo.setCurrentIndex(5)
+    assert home.connection_options() == (4, 500, 5)
 
     window.live.set_channel_count(32)
     assert len(window.live.channel_menu.actions()) == 32
@@ -73,11 +74,13 @@ def test_home_exposes_a_separate_bluetooth_connection_entry(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     requests = []
-    window.home.connect_bluetooth.connect(lambda boards, rate: requests.append((boards, rate)))
+    window.home.connect_bluetooth.connect(
+        lambda boards, rate, gain: requests.append((boards, rate, gain))
+    )
 
     window.home.bluetooth_card.action.click()
 
-    assert requests == [(1, 250)]
+    assert requests == [(1, 250, 6)]
 
 
 def test_shipped_connection_and_diagnostics_pages_do_not_expose_virtual_devices(qtbot):

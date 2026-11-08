@@ -65,8 +65,8 @@ class ActionCard(QFrame):
 
 
 class HomePage(QWidget):
-    connect_real = Signal(int, int)
-    connect_bluetooth = Signal(int, int)
+    connect_real = Signal(int, int, int)
+    connect_bluetooth = Signal(int, int, int)
     open_history = Signal()
     open_diagnostics = Signal()
     open_session = Signal(Path)
@@ -94,6 +94,11 @@ class HomePage(QWidget):
         self.sample_rate_combo = QComboBox()
         self.sample_rate_combo.addItem("250 SPS", 250)
         self.sample_rate_combo.addItem("500 SPS", 500)
+        self.gain_combo = QComboBox()
+        for gain_code, gain in enumerate((1, 2, 4, 6, 8, 12, 24)):
+            self.gain_combo.addItem(f"{gain}×", gain_code)
+        self.gain_combo.setCurrentIndex(6)
+        self.gain_combo.setToolTip("所有板的启用通道统一设置；非 24× 需要固件 v0.7.13 及以上")
         config_note = muted(
             "请按实际串联板卡数选择。当前固件不会自动探测板卡数量，连接后会校验设备读回值。"
         )
@@ -103,6 +108,8 @@ class HomePage(QWidget):
         config_layout.addWidget(self.board_combo)
         config_layout.addWidget(QLabel("采样率"))
         config_layout.addWidget(self.sample_rate_combo)
+        config_layout.addWidget(QLabel("PGA 增益"))
+        config_layout.addWidget(self.gain_combo)
         config_layout.addSpacing(12)
         config_layout.addWidget(config_note, 1)
         cards = QHBoxLayout()
@@ -174,16 +181,18 @@ class HomePage(QWidget):
             self.recent.addItem("还没有记录。连接设备后即可开始第一次采集。")
             self.recent.item(0).setFlags(Qt.ItemFlag.NoItemFlags)
 
-    def connection_options(self) -> tuple[int, int]:
+    def connection_options(self) -> tuple[int, int, int]:
         return (
             int(self.board_combo.currentData()),
             int(self.sample_rate_combo.currentData()),
+            int(self.gain_combo.currentData()),
         )
 
     def set_connecting(self, connecting: bool, detail: str = "") -> None:
         """Keep connection progress on the connection page until configuration succeeds."""
         self.board_combo.setEnabled(not connecting)
         self.sample_rate_combo.setEnabled(not connecting)
+        self.gain_combo.setEnabled(not connecting)
         self.real_card.action.setEnabled(not connecting)
         self.bluetooth_card.action.setEnabled(not connecting)
         self.connection_status.setVisible(connecting)
@@ -336,6 +345,7 @@ class DiagnosticsPage(QWidget):
             f"设备 ID：{info.device_id:016X}\n\n"
             "ADS1299 配置读回\n"
             f"模式：{profile}\n板卡：{status.board_count}\n采样率：{status.sample_rate_hz} SPS\n"
+            f"PGA 增益：{(1, 2, 4, 6, 8, 12, 24)[status.gain_code]}×\n"
             f"通道掩码：0x{status.channel_enabled_mask:02X}\n"
             f"寄存器校验：{'通过' if status.register_verified else '失败'}\n"
             f"ADS1299 ID：0x{status.ads1299_id:02X}\n\n"

@@ -29,6 +29,7 @@ from .protocol import (
     CAP_INPUT_SHORT,
     CAP_INTERNAL_TEST,
     CAP_MULTI_BOARD,
+    CAP_UNIFORM_PGA_GAIN,
     CAP_WIFI_BCIKIT_CONTROL,
     CAP_WIFI_BCIKIT_STREAM,
     CMD_GET_INFO,
@@ -37,6 +38,7 @@ from .protocol import (
     CMD_RESET_STATS,
     CMD_SET_BOARD_COUNT,
     CMD_SET_CHANNEL_MASK,
+    CMD_SET_GAIN,
     CMD_SET_OUTPUT_FORMAT,
     CMD_SET_PROFILE,
     CMD_SET_SAMPLE_RATE,
@@ -60,6 +62,7 @@ from .protocol import (
     StreamDecoder,
     encode_control_frame,
     encode_sample_frame,
+    microvolts_per_count,
 )
 
 logger = logging.getLogger(__name__)
@@ -116,6 +119,7 @@ class VirtualTransport(Transport):
         seed: int = 42,
         drop_every: int = 0,
         ads1299_id: int = 0x3E,
+        supports_uniform_gain: bool = True,
     ) -> None:
         if scenario not in self.SCENARIOS:
             raise ValueError(f"unknown virtual scenario: {scenario}")
@@ -136,6 +140,7 @@ class VirtualTransport(Transport):
         self._channel_mask = 0xFF
         self._gain_code = 6
         self._ads1299_id = ads1299_id & 0xFF
+        self._supports_uniform_gain = supports_uniform_gain
         self._drop_pending = False
         self._counters = [0] * 8
 
@@ -202,6 +207,7 @@ class VirtualTransport(Transport):
                 | CAP_WIFI_BCIKIT_STREAM
                 | CAP_WIFI_BCIKIT_CONTROL
                 | CAP_AUTO_PROTOCOL_SESSION
+                | (CAP_UNIFORM_PGA_GAIN if self._supports_uniform_gain else 0)
             )
             payload = (
                 bytes((0, 6, 0, 1, 0xFE))
@@ -221,10 +227,16 @@ class VirtualTransport(Transport):
             CMD_SET_OUTPUT_FORMAT,
             CMD_SET_SAMPLE_RATE,
             CMD_SET_BOARD_COUNT,
+            CMD_SET_GAIN,
             CMD_SET_PROFILE,
             CMD_SET_CHANNEL_MASK,
         }:
-            status = STATUS_BUSY if self._streaming else self._apply_config(command, frame.payload)
+            if command == CMD_SET_GAIN and not self._supports_uniform_gain:
+                status = STATUS_INVALID_COMMAND
+            else:
+                status = (
+                    STATUS_BUSY if self._streaming else self._apply_config(command, frame.payload)
+                )
         elif command == CMD_RESET_STATS:
             self._counters = [0] * 8
         else:
@@ -254,6 +266,10 @@ class VirtualTransport(Transport):
             self._profile = payload[0]
         elif command == CMD_SET_CHANNEL_MASK:
             self._channel_mask = payload[0]
+        elif command == CMD_SET_GAIN:
+            if payload[0] not in range(7):
+                return STATUS_INVALID_VALUE
+            self._gain_code = payload[0]
         return STATUS_OK
 
     def _status_payload(self) -> bytes:
@@ -304,7 +320,7 @@ class VirtualTransport(Transport):
 
     def _channels_for_board(self, board: int) -> list[int]:
         t = self._timestamp_us / 1_000_000.0
-        uv_per_count = 0.0223517444553
+        uv_per_count = microvolts_per_count(self._gain_code)
         values: list[int] = []
         for channel in range(8):
             amplitude = 6.0 + channel * 0.45 + board

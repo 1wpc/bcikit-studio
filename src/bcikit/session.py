@@ -26,6 +26,7 @@ from .protocol import (
     CAP_INPUT_SHORT,
     CAP_INTERNAL_TEST,
     CAP_MULTI_BOARD,
+    CAP_UNIFORM_PGA_GAIN,
     CAP_WIFI_BCIKIT_CONTROL,
     CMD_GET_INFO,
     CMD_GET_STATUS,
@@ -33,6 +34,7 @@ from .protocol import (
     CMD_RESET_STATS,
     CMD_SET_BOARD_COUNT,
     CMD_SET_CHANNEL_MASK,
+    CMD_SET_GAIN,
     CMD_SET_OUTPUT_FORMAT,
     CMD_SET_PROFILE,
     CMD_SET_SAMPLE_RATE,
@@ -445,6 +447,8 @@ class DeviceSession:
             )
         if self.config.board_count > 1 and not info.capabilities & CAP_MULTI_BOARD:
             raise RuntimeError("设备固件不支持多板采集；请改为单板配置或升级支持多板的固件")
+        if self.config.gain_code != 6 and not info.capabilities & CAP_UNIFORM_PGA_GAIN:
+            raise RuntimeError("设备固件不支持可配置 PGA 增益；请选择 24× 或升级到 v0.7.13 及以上")
         self.device_info = info
         self._diagnostic(
             "info",
@@ -457,6 +461,8 @@ class DeviceSession:
         # A daisy chain must be configured before its shared CONFIG1 sample-rate
         # register is written.  Firmware v0.6 verifies this order while stopped.
         await self.send_command(CMD_SET_BOARD_COUNT, bytes((self.config.board_count,)))
+        if info.capabilities & CAP_UNIFORM_PGA_GAIN:
+            await self.send_command(CMD_SET_GAIN, bytes((self.config.gain_code,)))
         await self.send_command(
             CMD_SET_SAMPLE_RATE, self.config.sample_rate_hz.to_bytes(2, "little")
         )
@@ -469,6 +475,7 @@ class DeviceSession:
             self.config.board_count,
             self.config.sample_rate_hz,
             self.config.channel_mask,
+            self.config.gain_code,
         )
         actual = (
             status.output_format,
@@ -476,6 +483,7 @@ class DeviceSession:
             status.board_count,
             status.sample_rate_hz,
             status.channel_enabled_mask,
+            status.gain_code,
         )
         if actual != expected:
             raise RuntimeError(f"设备配置读回不一致：期望 {expected}，实际 {actual}")
@@ -555,12 +563,14 @@ class DeviceSession:
         frames = self._frames_for_batch
         self._frames_for_batch = []
         raw = np.asarray([frame.channels_physical_order() for frame in frames], dtype=np.int32)
-        scale = microvolts_per_count(frames[0].gain_code)
+        scales = np.asarray(
+            [microvolts_per_count(frame.gain_code) for frame in frames], dtype=np.float64
+        )
         batch = SampleBatch(
             np.asarray([frame.timestamp_us for frame in frames], dtype=np.uint64),
             np.asarray([frame.sequence for frame in frames], dtype=np.uint32),
             raw,
-            raw.astype(np.float64) * scale,
+            raw.astype(np.float64) * scales[:, None],
             np.asarray([frame.flags for frame in frames], dtype=np.uint16),
             frames[0].sample_rate_hz,
         )

@@ -73,13 +73,13 @@ class StudioController(QObject):
     def _connect_signals(self) -> None:
         home = self.window.home
         home.connect_real.connect(
-            lambda board_count, sample_rate: self._spawn(
-                self.connect_real(board_count, sample_rate)
+            lambda board_count, sample_rate, gain_code: self._spawn(
+                self.connect_real(board_count, sample_rate, gain_code)
             )
         )
         home.connect_bluetooth.connect(
-            lambda board_count, sample_rate: self._spawn(
-                self.connect_bluetooth(board_count, sample_rate)
+            lambda board_count, sample_rate, gain_code: self._spawn(
+                self.connect_bluetooth(board_count, sample_rate, gain_code)
             )
         )
         home.open_history.connect(self.window.show_history)
@@ -126,7 +126,8 @@ class StudioController(QObject):
         )
 
     async def connect_bluetooth(
-        self, board_count: int = 1, sample_rate_hz: int = 250, destination: str = "live"
+        self, board_count: int = 1, sample_rate_hz: int = 250,
+        gain_code: int = 6, destination: str = "live"
     ) -> None:
         if board_count > 2 or (board_count == 2 and sample_rate_hz > 250):
             self._show_error(
@@ -154,7 +155,7 @@ class StudioController(QObject):
             return
         await self._connect(
             BleTransport(device),
-            SessionConfig(board_count, sample_rate_hz),
+            SessionConfig(board_count, sample_rate_hz, gain_code=gain_code),
             destination=destination,
         )
 
@@ -173,7 +174,8 @@ class StudioController(QObject):
         return devices[labels.index(selected)]
 
     async def connect_real(
-        self, board_count: int = 1, sample_rate_hz: int = 250, destination: str = "live"
+        self, board_count: int = 1, sample_rate_hz: int = 250,
+        gain_code: int = 6, destination: str = "live"
     ) -> None:
         answer = QMessageBox.information(
             self.window,
@@ -185,18 +187,21 @@ class StudioController(QObject):
         if answer != QMessageBox.StandardButton.Ok:
             return
         await self._connect(
-            WiFiTransport(), SessionConfig(board_count, sample_rate_hz), destination=destination
+            WiFiTransport(), SessionConfig(board_count, sample_rate_hz, gain_code=gain_code),
+            destination=destination
         )
 
     async def connect_diagnostic_real(
-        self, board_count: int = 1, sample_rate_hz: int = 250
+        self, board_count: int = 1, sample_rate_hz: int = 250, gain_code: int = 6
     ) -> None:
-        await self.connect_real(board_count, sample_rate_hz, destination="diagnostics")
+        await self.connect_real(board_count, sample_rate_hz, gain_code, destination="diagnostics")
 
     async def connect_diagnostic_bluetooth(
-        self, board_count: int = 1, sample_rate_hz: int = 250
+        self, board_count: int = 1, sample_rate_hz: int = 250, gain_code: int = 6
     ) -> None:
-        await self.connect_bluetooth(board_count, sample_rate_hz, destination="diagnostics")
+        await self.connect_bluetooth(
+            board_count, sample_rate_hz, gain_code, destination="diagnostics"
+        )
 
     async def return_home_from_diagnostics(self) -> None:
         """The connection page must never be shown with a hidden live session."""
@@ -226,10 +231,11 @@ class StudioController(QObject):
             await self.disconnect_session()
         session = DeviceSession(transport, config or SessionConfig())
         logger.info(
-            "开始连接：%s，%d 块板、%d SPS",
+            "开始连接：%s，%d 块板、%d SPS、PGA %d×",
             transport.description,
             session.config.board_count,
             session.config.sample_rate_hz,
+            (1, 2, 4, 6, 8, 12, 24)[session.config.gain_code],
         )
         self.session = session
         self.window.live.clear_session_data()

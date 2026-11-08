@@ -8,11 +8,14 @@ import pytest
 
 from bcikit.models import SessionConfig
 from bcikit.protocol import (
+    CAP_UNIFORM_PGA_GAIN,
+    CMD_SET_GAIN,
     CMD_SET_PROFILE,
     CMD_START,
     PROFILE_EEG_SRB2,
     PROFILE_INPUT_SHORT,
     PROFILE_INTERNAL_TEST,
+    microvolts_per_count,
 )
 from bcikit.recording import (
     BDFExportError,
@@ -26,6 +29,69 @@ from bcikit.recording import (
 )
 from bcikit.session import CommandError, DeviceSession
 from bcikit.transport import ReplayTransport, VirtualTransport
+
+
+@pytest.mark.asyncio
+async def test_uniform_pga_gain_is_set_and_sample_uses_frame_gain():
+    class TracingTransport(VirtualTransport):
+        def __init__(self):
+            super().__init__()
+            self.commands = []
+
+        async def _handle_command(self, frame):
+            self.commands.append((frame.code, frame.payload))
+            await super()._handle_command(frame)
+
+    transport = TracingTransport()
+    session = DeviceSession(transport, SessionConfig(gain_code=5))
+    await session.connect()
+    assert session.device_info.capabilities & CAP_UNIFORM_PGA_GAIN
+    assert session.device_status.gain_code == 5
+    assert (CMD_SET_GAIN, b"\x05") in transport.commands
+    await session.start()
+    batch = await asyncio.wait_for(session.sample_queue.get(), 1.0)
+    np.testing.assert_allclose(
+        batch.microvolts, batch.raw_counts * microvolts_per_count(5)
+    )
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_old_firmware_uses_default_gain_without_new_command():
+    class LegacyTransport(VirtualTransport):
+        def __init__(self):
+            super().__init__(supports_uniform_gain=False)
+            self.commands = []
+
+        async def _handle_command(self, frame):
+            self.commands.append(frame.code)
+            await super()._handle_command(frame)
+
+    transport = LegacyTransport()
+    session = DeviceSession(transport)
+    await session.connect()
+    assert CMD_SET_GAIN not in transport.commands
+    assert session.device_status.gain_code == 6
+    await session.close()
+
+    unsupported = DeviceSession(LegacyTransport(), SessionConfig(gain_code=0))
+    with pytest.raises(RuntimeError, match="不支持可配置 PGA 增益"):
+        await unsupported.connect()
+    await unsupported.close()
+
+
+@pytest.mark.asyncio
+async def test_gain_readback_mismatch_rejects_connection():
+    class WrongReadbackTransport(VirtualTransport):
+        def _status_payload(self):
+            payload = bytearray(super()._status_payload())
+            payload[6] = 6
+            return bytes(payload)
+
+    session = DeviceSession(WrongReadbackTransport(), SessionConfig(gain_code=2))
+    with pytest.raises(RuntimeError, match="配置读回不一致"):
+        await session.connect()
+    await session.close()
 
 
 @pytest.mark.asyncio
