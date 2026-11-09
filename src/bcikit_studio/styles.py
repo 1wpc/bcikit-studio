@@ -1,7 +1,8 @@
-"""Small macOS-oriented visual system shared by all pages."""
+"""Small cross-platform visual system shared by all pages."""
 
 from __future__ import annotations
 
+import sys
 from typing import cast
 
 from PySide6.QtGui import QPalette
@@ -49,8 +50,13 @@ def colors(app: QApplication | None = None) -> dict[str, str]:
 
 def stylesheet(app: QApplication) -> str:
     c = colors(app)
+    font_family = (
+        "'Microsoft YaHei UI', 'Microsoft YaHei', 'Segoe UI'"
+        if sys.platform == "win32"
+        else "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC'"
+    )
     return f"""
-    * {{ font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC'; }}
+    * {{ font-family: {font_family}; }}
     QMainWindow, QWidget#AppRoot {{ background: {c["window"]}; color: {c["text"]}; }}
     QLabel {{ color: {c["text"]}; }}
     QLabel#Muted {{ color: {c["muted"]}; }}

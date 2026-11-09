@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import platform
 import time
 from contextlib import suppress
 from dataclasses import asdict, replace
@@ -89,6 +90,8 @@ class DeviceSession:
         self._pending: dict[int, asyncio.Future[ControlFrame]] = {}
         self._next_request_id = 1
         self._closing = False
+        self._close_finished = asyncio.Event()
+        self._close_finished.set()
         self._last_sample_monotonic = 0.0
         self._last_device_timestamp_us: int | None = None
         self._marker_id = 0
@@ -163,23 +166,30 @@ class DeviceSession:
 
     async def close(self) -> None:
         if self._closing:
+            # Another caller may already be closing the same session. Returning
+            # here would make the UI start a new connection before /tcp cleanup.
+            await self._close_finished.wait()
             return
         self._closing = True
-        with suppress(Exception):
-            await self.stop()
-        if self.recording:
-            self.stop_recording("application_exit")
-        for pending in self._pending.values():
-            if not pending.done():
-                pending.cancel()
-        self._pending.clear()
-        if self._receiver is not None:
-            self._receiver.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._receiver
-            self._receiver = None
-        await self.transport.close()
-        self._set_state(SessionState.DISCONNECTED)
+        self._close_finished.clear()
+        try:
+            with suppress(Exception):
+                await self.stop()
+            if self.recording:
+                self.stop_recording("application_exit")
+            for pending in self._pending.values():
+                if not pending.done():
+                    pending.cancel()
+            self._pending.clear()
+            if self._receiver is not None:
+                self._receiver.cancel()
+                with suppress(asyncio.CancelledError):
+                    await self._receiver
+                self._receiver = None
+            await self.transport.close()
+            self._set_state(SessionState.DISCONNECTED)
+        finally:
+            self._close_finished.set()
 
     async def force_close(self) -> None:
         """Release local tasks and handles after an unresponsive transport shutdown.
@@ -379,7 +389,7 @@ class DeviceSession:
             return
         info = self.device_info
         metadata = {
-            "software_version": "0.1.0",
+            "software_version": "0.1.1",
             "protocol_version": PROTOCOL_VERSION,
             "firmware_version": (
                 ".".join(map(str, info.firmware_version)) if info is not None else None
@@ -387,7 +397,7 @@ class DeviceSession:
             "device_id": f"{info.device_id:016X}" if info is not None else None,
             "transport": self.transport.description,
             "config": asdict(self.config),
-            "host": {"platform": "macOS"},
+            "host": {"platform": "macOS" if platform.system() == "Darwin" else platform.system()},
         }
         path = self.recorder.start(name, metadata)
         self._diagnostic("info", f"开始记录：{path.name}")
@@ -413,7 +423,7 @@ class DeviceSession:
         return marker
 
     async def _handshake(self) -> None:
-        ping_payload = b"BCIKit Studio 0.1.0"
+        ping_payload = b"BCIKit Studio 0.1.1"
         ping = await self.send_command(CMD_PING, ping_payload)
         if ping.payload != ping_payload:
             raise RuntimeError("设备 PING 回显不一致")

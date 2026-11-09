@@ -101,6 +101,7 @@ class WaveformView(QWidget):
         self.scale_mode = "uniform"
         self.uniform_scale_uv = 100.0
         self.channel_visible = [True] * 32
+        self._auto_scales_uv: list[float | None] = [None] * 32
         self._curves: list[pg.PlotDataItem] = []
         self._separators: list[pg.InfiniteLine] = []
         c = colors()
@@ -123,12 +124,14 @@ class WaveformView(QWidget):
 
     def reset(self, sample_rate_hz: int = 250, channel_count: int = 8) -> None:
         self.buffer.reset(sample_rate_hz, channel_count)
+        self._auto_scales_uv = [None] * 32
         self._ensure_curves(channel_count)
         self.refresh()
 
     def clear(self) -> None:
         """Remove all session samples even when the display is paused."""
         self.buffer.reset(self.buffer.sample_rate_hz, self.buffer.channel_count)
+        self._auto_scales_uv = [None] * 32
         for curve in self._curves:
             curve.setData([], [])
         self._update_channel_axis(self.buffer.channel_count)
@@ -168,8 +171,22 @@ class WaveformView(QWidget):
         self.plot.setYRange(-0.8, max(0.8, count - 0.2), padding=0.02)
 
     def _update_channel_axis(self, count: int) -> None:
-        ticks = [(index, f"CH{index + 1}") for index in range(count) if self.channel_visible[index]]
+        self.channel_axis.setWidth(120 if self.scale_mode == "auto" else 54)
+        ticks = [
+            (index, self._channel_label(index))
+            for index in range(count)
+            if self.channel_visible[index]
+        ]
         self.channel_axis.setTicks([ticks])
+
+    def _channel_label(self, index: int) -> str:
+        label = f"CH{index + 1}"
+        scale = self._auto_scales_uv[index]
+        if self.scale_mode != "auto" or scale is None:
+            return label
+        if scale >= 1_000:
+            return f"{label}  ±{scale / 1_000:.1f} mV"
+        return f"{label}  ±{scale:.1f} µV"
 
     def refresh(self) -> None:
         if self.paused:
@@ -195,6 +212,7 @@ class WaveformView(QWidget):
             if self.scale_mode == "auto":
                 percentile = float(np.percentile(np.abs(centered), 95))
                 scale = max(5.0, percentile * 1.15)
+                self._auto_scales_uv[channel] = scale
             else:
                 scale = self.uniform_scale_uv
             # The selected ± scale reaches the edge of this channel's track.

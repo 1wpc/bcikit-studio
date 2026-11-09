@@ -488,6 +488,7 @@ class WiFiTransport(Transport):
         self._writer: asyncio.StreamWriter | None = None
         self._accepted: asyncio.Future[None] | None = None
         self._configured = False
+        self._requested_target: tuple[str, int] | None = None
         self.output_mode = "auto"
 
     async def open(self) -> None:
@@ -502,6 +503,7 @@ class WiFiTransport(Transport):
             logger.info("Wi-Fi 建链：查询 /board 和 /all")
             self.board_info = await self._json_request("GET", "/board")
             self.all_info = await self._json_request("GET", "/all")
+            await self._release_stale_same_host_target(host_ip)
             loop = asyncio.get_running_loop()
             self._accepted = loop.create_future()
             self._server = await asyncio.start_server(self._on_connection, "0.0.0.0", 0)
@@ -513,6 +515,9 @@ class WiFiTransport(Transport):
                 "delimiter": False,
                 "latency": 10_000,
             }
+            # The board can accept POST /tcp even if its HTTP reply is lost.
+            # Remember this exact listener so close() can release that orphan.
+            self._requested_target = (host_ip, int(socket_info[1]))
             try:
                 await self._json_request("POST", "/tcp", request)
                 self.output_mode = "auto"
@@ -527,8 +532,8 @@ class WiFiTransport(Transport):
             self._configured = True
             await asyncio.wait_for(self._accepted, timeout=self.timeout)
             logger.info("Wi-Fi 建链：设备已反向连接本机 TCP listener")
-        except TransportError:
-            logger.warning("Wi-Fi 建链失败：设备热点路由不可用")
+        except TransportError as error:
+            logger.warning("Wi-Fi 建链失败：%s", error)
             await self.close()
             raise
         except Exception:
@@ -552,23 +557,70 @@ class WiFiTransport(Transport):
 
     async def close(self) -> None:
         logger.info("Wi-Fi 建链：关闭 TCP 和 HTTP 资源")
-        if self._configured and self._http is not None:
-            with suppress(Exception):
-                await self._json_request("DELETE", "/tcp")
-        self._configured = False
-        if self._writer is not None:
-            self._writer.close()
-            with suppress(Exception):
-                await self._writer.wait_closed()
-        self._writer = None
-        self._reader = None
-        if self._server is not None:
-            self._server.close()
-            await self._server.wait_closed()
-        self._server = None
-        if self._http is not None:
-            await self._http.close()
-        self._http = None
+        try:
+            if self._http is not None and self._requested_target is not None:
+                await self._release_own_target()
+        finally:
+            self._configured = False
+            self._requested_target = None
+            if self._writer is not None:
+                self._writer.close()
+                with suppress(Exception):
+                    await asyncio.wait_for(self._writer.wait_closed(), timeout=0.5)
+            self._writer = None
+            self._reader = None
+            if self._server is not None:
+                self._server.close()
+                await self._server.wait_closed()
+            self._server = None
+            self._accepted = None
+            if self._http is not None:
+                await self._http.close()
+            self._http = None
+
+    async def _release_own_target(self) -> None:
+        """Delete only this Studio listener, never another station's session."""
+        target = self._requested_target
+        if target is None:
+            return
+        for attempt in range(2):
+            try:
+                status = await asyncio.wait_for(
+                    self._json_request("GET", "/tcp"), timeout=0.75
+                )
+                if (status.get("ip"), status.get("port")) != target:
+                    logger.info("设备端已无本次 TCP 会话，无需再次释放")
+                    return
+                await asyncio.wait_for(
+                    self._json_request("DELETE", "/tcp"), timeout=1.25
+                )
+                logger.info("已释放设备端 TCP 会话：%s:%d", *target)
+                return
+            except (TimeoutError, TransportError, RuntimeError) as error:
+                logger.warning("释放设备端 TCP 会话第 %d 次失败：%s", attempt + 1, error)
+        logger.warning("设备端 TCP 会话未确认释放；下次连接将重新检查设备状态")
+
+    async def _release_stale_same_host_target(self, host_ip: str) -> None:
+        """Clear an inactive listener left by this Mac before opening a new one."""
+        try:
+            status = await asyncio.wait_for(
+                self._json_request("GET", "/tcp"), timeout=0.75
+            )
+        except (TimeoutError, TransportError) as error:
+            logger.debug("无法检查旧 TCP 会话，继续正常建链：%s", error)
+            return
+        if (
+            status.get("ip") == host_ip
+            and status.get("port")
+            and status.get("connected") is False
+        ):
+            try:
+                await asyncio.wait_for(
+                    self._json_request("DELETE", "/tcp"), timeout=1.25
+                )
+                logger.info("已自动清除本机遗留的无连接 TCP 会话")
+            except (TimeoutError, TransportError) as error:
+                logger.warning("清除本机遗留 TCP 会话失败，将尝试固件自动接管：%s", error)
 
     async def emergency_stop(self) -> None:
         if self._http is None:
@@ -633,7 +685,8 @@ class WiFiTransport(Transport):
                 return value if isinstance(value, dict) else {"value": value}
         except (aiohttp.ClientError, TimeoutError) as error:
             raise TransportError(
-                "无法访问 192.168.4.1。请先连接 OpenBCI-XXXX 热点，并确认设备已上电。"
+                f"请求 {method} {path} 失败（{type(error).__name__}: {error}）。"
+                "请检查设备热点连接与固件 HTTP 服务。"
             ) from error
 
 

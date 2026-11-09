@@ -34,7 +34,7 @@ from bcikit.transport import (
 from .window import MainWindow
 
 logger = logging.getLogger(__name__)
-DISCONNECT_TIMEOUT_SECONDS = 4.0
+DISCONNECT_TIMEOUT_SECONDS = 7.0
 
 
 class StudioController(QObject):
@@ -48,6 +48,8 @@ class StudioController(QObject):
         self._shutdown_started = False
         self._reconnecting = False
         self._disconnecting = False
+        self._connecting_session: DeviceSession | None = None
+        self._session_consumers: dict[DeviceSession, list[asyncio.Task]] = {}
         self._disconnect_finished = asyncio.Event()
         self._disconnect_finished.set()
         self._tasks: set[asyncio.Task] = set()
@@ -226,7 +228,13 @@ class StudioController(QObject):
         # newly established reverse TCP stream after START succeeds.
         if self._disconnecting:
             logger.info("等待上一会话的连接资源释放")
-            await self._disconnect_finished.wait()
+            try:
+                await asyncio.wait_for(
+                    self._disconnect_finished.wait(), timeout=DISCONNECT_TIMEOUT_SECONDS + 2.0
+                )
+            except TimeoutError:
+                self._show_error("连接未开始", "上一连接清理超时；请查看运行日志后重试。")
+                return
         if self.session is not None:
             await self.disconnect_session()
         session = DeviceSession(transport, config or SessionConfig())
@@ -238,6 +246,7 @@ class StudioController(QObject):
             (1, 2, 4, 6, 8, 12, 24)[session.config.gain_code],
         )
         self.session = session
+        self._connecting_session = session
         self.window.live.clear_session_data()
         self.window.live.set_channel_count(session.config.board_count * 8)
         self.window.live.waveform.reset(
@@ -250,6 +259,7 @@ class StudioController(QObject):
             asyncio.create_task(self._consume_diagnostics(session)),
         ]
         self._tasks.update(consumers)
+        self._session_consumers[session] = consumers
         for task in consumers:
             task.add_done_callback(self._tasks.discard)
         try:
@@ -274,32 +284,32 @@ class StudioController(QObject):
                 exc_info=not isinstance(error, TransportError),
             )
             if self.session is session:
-                self.session = None
-            self.filter = None
-            with suppress(Exception):
-                await session.close()
-            self.window.live.clear_session_data()
-            self.window.hardware_diagnostics.set_connected(False)
+                await self.disconnect_session("连接失败，正在释放设备连接")
             self._show_error("连接失败", str(error))
         finally:
+            if self._connecting_session is session:
+                self._connecting_session = None
             self._set_connection_progress(destination, False)
 
     async def disconnect_session(self, reason: str = "用户请求断开设备") -> None:
         if self._disconnecting:
+            with suppress(TimeoutError):
+                await asyncio.wait_for(
+                    self._disconnect_finished.wait(), timeout=DISCONNECT_TIMEOUT_SECONDS + 2.0
+                )
             return
         self._disconnecting = True
         self._disconnect_finished.clear()
         session = self.session
         self.session = None
         self.filter = None
-        # Return to the connection flow immediately. Closing a TCP connection can
-        # take a moment, and leaving the stale Live page visible during that time
-        # makes it look as though the disconnect action did nothing.
-        self.window.live.clear_session_data()
-        self.window.hardware_diagnostics.set_connected(False)
-        self.window.show_home()
-        self.window.home.set_connecting(True, "正在断开并释放设备连接…")
         try:
+            # Keep UI changes inside the same finally-protected lifecycle: even
+            # a page/widget error must never leave _disconnecting latched.
+            self.window.live.clear_session_data()
+            self.window.hardware_diagnostics.set_connected(False)
+            self.window.show_home()
+            self.window.home.set_connecting(True, "正在断开并释放设备连接…")
             logger.info(reason)
             if session is not None:
                 try:
@@ -311,14 +321,20 @@ class StudioController(QObject):
                     )
                     logger.warning(warning)
                     self.window.append_diagnostic("warning", warning)
-                    await session.force_close()
+                    await asyncio.wait_for(session.force_close(), timeout=1.5)
         except Exception as error:
             self.window.append_diagnostic("warning", f"断开设备时清理异常：{error}")
+            if session is not None:
+                with suppress(Exception):
+                    await asyncio.wait_for(session.force_close(), timeout=1.5)
         finally:
-            self.refresh_sessions()
+            consumers = self._session_consumers.pop(session, []) if session is not None else []
+            for task in consumers:
+                task.cancel()
             self._disconnecting = False
             self._disconnect_finished.set()
             self.window.home.set_connecting(False)
+            self.refresh_sessions()
 
     async def run_hardware_diagnostic(self, operation: str) -> None:
         """Run one explicit, capability-gated ADS1299 diagnostic operation."""
@@ -364,6 +380,10 @@ class StudioController(QObject):
             detail = session.transport.description
             self.window.live.set_state(state, detail)
             if state == SessionState.ERROR and session.last_error:
+                if self._connecting_session is session:
+                    # _connect owns handshake failures and must finish cleanup
+                    # before presenting a modal error dialog.
+                    continue
                 if isinstance(session.transport, WiFiTransport) and session.stats.valid_frames > 0:
                     if not self._reconnecting:
                         self._spawn(self._attempt_reconnect(session))

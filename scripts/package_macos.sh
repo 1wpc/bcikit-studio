@@ -8,11 +8,14 @@ app_path="$project_root/dist/macos/BCIKit Studio.app"
 plist_path="$app_path/Contents/Info.plist"
 
 cd "$project_root"
+app_version="$(uv version --short)"
 uv run pyside6-deploy -c pysidedeploy.spec --force
 
 plutil -replace CFBundleDisplayName -string "BCIKit Studio" "$plist_path"
 plutil -replace CFBundleName -string "BCIKit Studio" "$plist_path"
 plutil -replace CFBundleIdentifier -string "org.bcikit.studio" "$plist_path"
+plutil -replace CFBundleShortVersionString -string "$app_version" "$plist_path"
+plutil -replace CFBundleVersion -string "$app_version" "$plist_path"
 plutil -replace NSBluetoothAlwaysUsageDescription -string \
   "BCIKit Studio 使用蓝牙连接 BCIKit 采集设备并接收脑电数据。" "$plist_path"
 

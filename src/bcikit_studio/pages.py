@@ -430,6 +430,10 @@ class LivePage(QWidget):
         self.window_combo.setCurrentText("10 秒")
         self.scale_combo = QComboBox()
         self.scale_combo.addItems(["统一 ±100 µV", "统一 ±50 µV", "自动独立缩放"])
+        self.scale_combo.setToolTip(
+            "自动独立缩放以各通道当前窗口的中位数为中心；"
+            "左侧 ± 数值是相对基线的显示范围，原始数据不变。"
+        )
         self.board_view_combo = QComboBox()
         self.channel_button = QPushButton("通道 · 8/8")
         self.channel_menu = QMenu(self.channel_button)
@@ -606,6 +610,7 @@ class LivePage(QWidget):
         else:
             self.waveform.scale_mode = "uniform"
             self.waveform.uniform_scale_uv = 50.0 if "50" in text else 100.0
+        self.waveform.refresh()
 
     def _channel_toggled(self, channel: int, visible: bool) -> None:
         self.waveform.channel_visible[channel] = visible

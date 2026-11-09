@@ -6,7 +6,9 @@ import pytest
 
 import bcikit_studio.controller as controller_module
 from bcikit.analysis import analyze_eeg
-from bcikit.models import IntegrityStats, SampleBatch, SessionState
+from bcikit.models import IntegrityStats, SampleBatch, SessionConfig, SessionState
+from bcikit.session import CommandError, DeviceSession
+from bcikit.transport import VirtualTransport
 from bcikit_studio.controller import StudioController
 from bcikit_studio.styles import configure_app
 from bcikit_studio.waveform import TRACK_HALF_HEIGHT, WaveformView
@@ -143,6 +145,44 @@ def test_waveform_clips_each_channel_to_its_own_track_and_draws_separators(qtbot
         assert np.median(y_values) == pytest.approx(channel)
 
 
+def test_auto_scale_shows_live_per_channel_microvolt_range(qtbot):
+    waveform = WaveformView()
+    qtbot.addWidget(waveform)
+    waveform.show()
+    values = np.zeros((100, 8), dtype=np.float64)
+    values[:, 0] = np.linspace(-20.0, 20.0, 100) + 1_000.0
+    values[:, 1] = np.linspace(-2_000.0, 2_000.0, 100)
+    batch = SampleBatch(
+        timestamps_us=np.arange(100, dtype=np.uint64) * 4_000,
+        sequences=np.arange(100, dtype=np.uint32),
+        raw_counts=np.zeros((100, 8), dtype=np.int32),
+        microvolts=values,
+        flags=np.zeros(100, dtype=np.uint16),
+        sample_rate_hz=250,
+    )
+
+    waveform.scale_mode = "auto"
+    waveform.append(batch, values)
+    waveform.refresh()
+
+    qtbot.waitUntil(lambda: waveform.channel_axis.width() == 120)
+    assert waveform._channel_label(0).startswith("CH1  ±")
+    assert waveform._channel_label(0).endswith("µV")
+    assert waveform._channel_label(1).startswith("CH2  ±")
+    assert waveform._channel_label(1).endswith("mV")
+    assert waveform._auto_scales_uv[1] > waveform._auto_scales_uv[0]
+    np.testing.assert_array_equal(waveform.buffer.values(False)[1], values)
+
+    waveform.scale_mode = "uniform"
+    waveform.refresh()
+    qtbot.waitUntil(lambda: waveform.channel_axis.width() == 54)
+    assert waveform._channel_label(0) == "CH1"
+
+    waveform.scale_mode = "auto"
+    waveform.clear()
+    assert waveform._channel_label(0) == "CH1"
+
+
 def test_window_hides_immediately_while_shutdown_is_requested(qtbot):
     class ControllerStub:
         shutdown_complete = False
@@ -244,6 +284,89 @@ async def test_disconnect_forces_local_release_after_close_timeout(qtbot, monkey
     assert controller._disconnect_finished.is_set()
     assert window.home.real_card.action.isEnabled()
     assert "强制释放本机连接" in window.diagnostics.toPlainText()
+    controller._plot_timer.stop()
+    controller._stats_timer.stop()
+    controller._analysis_timer.stop()
+    controller.shutdown_complete = True
+
+
+@pytest.mark.asyncio
+async def test_disconnect_forces_local_release_after_close_error(qtbot):
+    class FailingSession:
+        def __init__(self) -> None:
+            self.force_closed = False
+
+        async def close(self) -> None:
+            raise RuntimeError("socket cleanup failed")
+
+        async def force_close(self) -> None:
+            self.force_closed = True
+
+    window = MainWindow()
+    qtbot.addWidget(window)
+    controller = StudioController(window)
+    session = FailingSession()
+    controller.session = session  # type: ignore[assignment]
+
+    await controller.disconnect_session()
+
+    assert session.force_closed
+    assert controller._disconnect_finished.is_set()
+    assert window.home.real_card.action.isEnabled()
+    controller._plot_timer.stop()
+    controller._stats_timer.stop()
+    controller._analysis_timer.stop()
+    controller.shutdown_complete = True
+
+
+@pytest.mark.asyncio
+async def test_failed_handshake_waits_for_single_cleanup_before_showing_error(qtbot, monkeypatch):
+    close_started = asyncio.Event()
+    allow_close = asyncio.Event()
+    close_calls = []
+    errors = []
+
+    async def fail_connect(session):
+        session.last_error = "gain apply failed"
+        session._set_state(SessionState.ERROR)
+        await asyncio.sleep(0)
+        raise CommandError(0x0C, 5)
+
+    async def slow_close(session):
+        close_calls.append(session)
+        if session._closing:
+            return
+        session._closing = True
+        close_started.set()
+        await allow_close.wait()
+        session._set_state(SessionState.DISCONNECTED)
+
+    monkeypatch.setattr(DeviceSession, "connect", fail_connect)
+    monkeypatch.setattr(DeviceSession, "close", slow_close)
+    window = MainWindow()
+    qtbot.addWidget(window)
+    controller = StudioController(window)
+    monkeypatch.setattr(
+        controller, "_show_error", lambda title, detail: errors.append((title, detail))
+    )
+    window.show()
+
+    connecting = asyncio.create_task(
+        controller._connect(VirtualTransport("normal"), SessionConfig(gain_code=0))
+    )
+    await asyncio.wait_for(close_started.wait(), timeout=1.0)
+    await asyncio.sleep(0)
+    assert controller._disconnecting
+    assert errors == []
+
+    allow_close.set()
+    await asyncio.wait_for(connecting, timeout=1.0)
+    assert len(close_calls) == 1
+    assert errors == [("连接失败", "命令 0x0C 失败，设备状态码 5")]
+    assert controller.session is None
+    assert not controller._disconnecting
+    assert controller._disconnect_finished.is_set()
+    assert window.home.real_card.action.isEnabled()
     controller._plot_timer.stop()
     controller._stats_timer.stop()
     controller._analysis_timer.stop()

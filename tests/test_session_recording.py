@@ -195,6 +195,9 @@ async def test_virtual_session_switches_diagnostic_profiles_and_reads_status():
     assert input_short.profile == PROFILE_INPUT_SHORT
     restored = await session.set_profile(PROFILE_EEG_SRB2)
     assert restored.profile == PROFILE_EEG_SRB2
+    # A running stream can increment the frame counter between RESET_STATS
+    # and GET_STATUS, so verify the exact zero value while acquisition is stopped.
+    await session.stop()
     assert (await session.reset_device_stats()).counters[1] == 0
     await session.close()
 

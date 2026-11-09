@@ -13,6 +13,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 from qasync import QEventLoop
 
+from . import __version__
 from .controller import StudioController
 from .styles import configure_app
 from .window import MainWindow
@@ -22,7 +23,7 @@ def build_application() -> tuple[QApplication, MainWindow, StudioController]:
     app = cast(QApplication | None, QApplication.instance()) or QApplication(sys.argv)
     app.setApplicationName("BCIKit Studio")
     app.setOrganizationName("BCIKit")
-    app.setApplicationVersion("0.1.0")
+    app.setApplicationVersion(__version__)
     app.setWindowIcon(QIcon(str(files("bcikit_studio.resources").joinpath("BCIKitStudio.icns"))))
     configure_app(app)
     window = MainWindow()
