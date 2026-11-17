@@ -7,14 +7,14 @@ BCIKit Studio 是 BCIKit 的桌面上位机，用于教学、科研和原型开�
 
 ## 1. 当前范围
 
-- 采集传输：BCIKit Wi-Fi TCP、BCIKit BLE v1。
+- 采集传输：BCIKit Wi-Fi TCP、BCIKit BLE v1、树莓派本机 TCP。
 - 硬件规模：1–4 块 AFE8 板，即 8–32 通道；板数由用户按实际串联装配选择，并在连接后由
   设备状态读回校验。
 - Wi-Fi：支持 250/500 SPS。
 - BLE：单板支持 250/500 SPS，双板只支持 250 SPS；三、四板或双板 500 SPS 必须使用
   Wi-Fi。
-- 首发交付：Apple Silicon macOS `.app`。Windows 可以从源码运行和本机构建 `.exe`，但当前
-  尚未提供签名的 Windows 安装包；请在目标 Windows 机器完成一次连接与采集验证后再分发。
+- Apple Silicon macOS `.app` 与 Raspberry Pi OS 64 位本机构建路径。Windows 可以从源码
+  运行和本机构建 `.exe`，但当前尚未提供签名的 Windows 安装包。
 
 模拟设备仅用于仓库的自动化测试，不会出现在交付版界面。
 
@@ -52,14 +52,14 @@ Wi-Fi 采集前，在系统网络设置中手动连接设备热点 `OpenBCI-XXXX
 发布包目前不含 Developer ID 签名、公证和 DMG 安装器；这不影响从源码构建或在本机运行，
 但组织分发前应自行完成签名与公证流程。
 
-### 3.2 从源码启动（macOS 与 Windows）
+### 3.2 从源码启动（macOS、Windows 与 Linux ARM64）
 
 要求：Git、[uv](https://docs.astral.sh/uv/)、Python 3.12。不要使用 macOS 自带 Python
 3.9，也不要用 Python 3.13 创建本项目环境。
 
 ```bash
-git clone <你的 BCIKit 仓库地址>
-cd BCIKit
+git clone https://github.com/1wpc/bcikit-studio.git
+cd bcikit-studio
 uv python install 3.12
 uv sync --extra dev
 uv run bcikit-studio
@@ -113,6 +113,35 @@ Pop-Location
 
 若只需本机使用，不必生成 `.exe`，直接执行 `uv run bcikit-studio` 即可。
 
+### 4.3 树莓派 5 本机工作站
+
+要求：Raspberry Pi OS 64 位桌面版、树莓派 5 上已正确连接 AFE8/ADS1299、SPI0 与
+2.048 MHz CLK 已启用，并已安装运行 `bcikit-acquisition.service`。采集服务安装及接线
+步骤见 [树莓派固件仓库](https://github.com/1wpc/bcikit_firmware_rpi5)。Studio 与
+采集服务必须在**同一台树莓派**，本机入口固定连接 `127.0.0.1:6677`，不需要切换 Wi-Fi。
+Raspberry Pi OS Bookworm 的 glibc 2.36 使用 Qt/PySide6 6.7.3 的 ARM64 轮子；其他平台
+仍使用原有 Qt 版本范围。
+
+```bash
+git clone https://github.com/1wpc/bcikit-studio.git
+cd bcikit-studio
+uv python install 3.12
+uv sync --extra dev
+./scripts/package_linux_aarch64.sh
+./scripts/install_linux_desktop.sh
+./dist/linux-aarch64/main.dist/main.bin
+```
+
+`standalone` 产物是整个 `main.dist` 目录；不能只复制 `main.bin`。也可不打包，执行
+`uv run bcikit-studio`。首页选择“树莓派本机”，并选择实际板数、采样率及增益；芯片诊断
+页也有同机连接入口。本机入口与其他连接方式共用握手、状态读回、采集、记录及诊断。
+只有在人体与电极完全断开时，才可用
+`uv run python scripts/smoke_local_pi.py --electrodes-disconnected` 做短时数据通路检查。
+
+本机 TCP 只解决软件进程间通信，**不等于人体电气隔离**。人体采集须先完成合规隔离供电
+和安全验证；未完成前仅可在电极与人体断开的条件下做台架测试。服务仅监听本机，若需要
+局域网远程控制，必须另行设计认证、访问控制和网络部署；不要直接暴露本机端口。
+
 ## 5. 首页与连接
 
 首页不是实时采集页的平级导航；它只用于选择配置、建立会话和打开已有记录。连接成功且设备
@@ -139,7 +168,14 @@ PGA 增益默认为 24×，可选 1×、2×、4×、6×、8×、12×、24×。�
 采样特征，订阅两个通知通道后再启动同一套 BCIKit 命令握手。蓝牙适合单板或双板 250 SPS 的
 近距离采集；长期记录、多板和高吞吐采集优先使用 Wi-Fi。
 
-### 5.4 芯片诊断
+### 5.4 树莓派本机连接
+
+仅 Linux 版显示“树莓派本机”按钮。先确认 `systemctl is-active bcikit-acquisition.service`
+为 `active`，再连接；Studio 通过本机 TCP 完成同一套 BCIKit 命令握手，不访问 ESP32 热点。
+如提示无法连接，请检查服务、SPI0 和 ADS1299 时钟；若服务正常但 START 失败，再看
+`journalctl -u bcikit-acquisition.service` 和设备状态计数。
+
+### 5.5 芯片诊断
 
 首页“芯片诊断”可通过 Wi-Fi 或蓝牙连接。连接后可：
 

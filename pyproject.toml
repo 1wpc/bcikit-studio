@@ -11,7 +11,8 @@ dependencies = [
   "platformdirs>=4.3,<5",
   "pyedflib>=0.1.39,<0.2",
   "pyqtgraph>=0.13.7,<0.15",
-  "pyside6-essentials>=6.8,<6.11",
+  "pyside6-essentials>=6.8,<6.11; sys_platform != 'linux' or platform_machine != 'aarch64'",
+  "pyside6-essentials>=6.7.3,<6.8; sys_platform == 'linux' and platform_machine == 'aarch64'",
   "qasync>=0.27,<1",
   "scipy>=1.14,<2",
 ]

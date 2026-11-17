@@ -22,6 +22,8 @@ from .models import (
 )
 from .protocol import (
     CAP_AUTO_PROTOCOL_SESSION,
+    CAP_BCIKIT_RAW_V1,
+    CAP_BINARY_CONTROL,
     CAP_BLE_BCIKIT_CONTROL,
     CAP_BLE_BCIKIT_STREAM,
     CAP_INPUT_SHORT,
@@ -56,7 +58,7 @@ from .protocol import (
     parse_device_status,
 )
 from .recording import SessionRecorder, utc_now_iso
-from .transport import BleTransport, Transport, WiFiTransport
+from .transport import BleTransport, LocalPiTransport, Transport, WiFiTransport
 
 logger = logging.getLogger(__name__)
 
@@ -228,8 +230,10 @@ class DeviceSession:
         self._set_state(SessionState.DISCONNECTED)
 
     async def reconnect(self, attempts: tuple[float, ...] = (0.5, 1.0, 2.0)) -> bool:
-        """Rebuild a failed Wi-Fi connection with bounded exponential backoff."""
-        if not self._had_streamed or not isinstance(self.transport, WiFiTransport):
+        """Rebuild a failed TCP connection with bounded exponential backoff."""
+        if not self._had_streamed or not isinstance(
+            self.transport, (WiFiTransport, LocalPiTransport)
+        ):
             return False
         if self._watchdog is not None:
             self._watchdog.cancel()
@@ -269,7 +273,7 @@ class DeviceSession:
                 return True
             except Exception as error:
                 self._diagnostic("warning", f"第 {number} 次重连失败：{error}")
-        self.last_error = "自动重连已达到 3 次上限，请检查热点和设备电源后手动重连"
+        self.last_error = "自动重连已达到 3 次上限，请检查采集服务或设备电源后手动重连"
         self._set_state(SessionState.ERROR)
         if self.recording:
             self.stop_recording("reconnect_exhausted")
@@ -432,6 +436,10 @@ class DeviceSession:
             raise RuntimeError(
                 f"设备协议版本为 {info.protocol_version}，软件仅支持版本 {PROTOCOL_VERSION}"
             )
+        if isinstance(self.transport, LocalPiTransport):
+            required = CAP_BCIKIT_RAW_V1 | CAP_BINARY_CONTROL
+            if info.capabilities & required != required:
+                raise RuntimeError("本机采集服务不支持 BCIKit 原生数据与双向控制")
         if (
             isinstance(self.transport, WiFiTransport)
             and not info.capabilities & CAP_WIFI_BCIKIT_CONTROL

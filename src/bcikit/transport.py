@@ -107,6 +107,68 @@ class Transport(ABC):
     async def close(self) -> None: ...
 
 
+class LocalPiTransport(Transport):
+    """Native BCIKit stream from the acquisition service on this Linux host.
+
+    Restrict the target to loopback: this mode must not silently become a LAN
+    connection or depend on the Wi-Fi reverse-TCP bootstrap.
+    """
+
+    description = "树莓派本机采集服务"
+    sample_timeout_seconds = 3.0
+
+    def __init__(self, port: int = 6677, timeout: float = 3.0) -> None:
+        if not 1 <= port <= 65535:
+            raise ValueError("port must be in 1..65535")
+        self.port = port
+        self.timeout = timeout
+        self._reader: asyncio.StreamReader | None = None
+        self._writer: asyncio.StreamWriter | None = None
+
+    async def open(self) -> None:
+        if self._reader is not None:
+            return
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection("127.0.0.1", self.port), timeout=self.timeout
+            )
+        except (OSError, TimeoutError) as error:
+            raise TransportError(
+                f"无法连接本机采集服务（127.0.0.1:{self.port}）。"
+                "请检查树莓派上的 bcikit-acquisition.service、SPI0 和 ADS1299 时钟。"
+            ) from error
+        sock = writer.get_extra_info("socket")
+        if sock is not None:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        self._reader, self._writer = reader, writer
+
+    async def read(self, size: int = 4096) -> bytes:
+        if self._reader is None:
+            raise TransportError("本机采集服务尚未连接")
+        data = await self._reader.read(size)
+        if not data:
+            raise TransportError("本机采集服务已断开")
+        return data
+
+    async def write(self, data: bytes) -> None:
+        if self._writer is None:
+            raise TransportError("本机采集服务尚未连接")
+        try:
+            self._writer.write(data)
+            await self._writer.drain()
+        except (ConnectionError, OSError) as error:
+            raise TransportError("本机采集服务写入失败") from error
+
+    async def close(self) -> None:
+        writer = self._writer
+        self._reader = None
+        self._writer = None
+        if writer is not None:
+            writer.close()
+            with suppress(Exception):
+                await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
+
+
 class VirtualTransport(Transport):
     """Deterministic BCIKit device simulator speaking the real binary protocol."""
 

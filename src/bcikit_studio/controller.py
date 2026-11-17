@@ -26,6 +26,7 @@ from bcikit.session import DeviceSession
 from bcikit.transport import (
     BleDevice,
     BleTransport,
+    LocalPiTransport,
     TransportError,
     VirtualTransport,
     WiFiTransport,
@@ -84,6 +85,11 @@ class StudioController(QObject):
                 self.connect_bluetooth(board_count, sample_rate, gain_code)
             )
         )
+        home.connect_local.connect(
+            lambda board_count, sample_rate, gain_code: self._spawn(
+                self.connect_local(board_count, sample_rate, gain_code)
+            )
+        )
         home.open_history.connect(self.window.show_history)
         home.open_diagnostics.connect(self.window.show_hardware_diagnostics)
         home.open_session.connect(self.open_session)
@@ -96,6 +102,9 @@ class StudioController(QObject):
         )
         diagnostics.connect_bluetooth_requested.connect(
             lambda: self._spawn(self.connect_diagnostic_bluetooth(*home.connection_options()))
+        )
+        diagnostics.connect_local_requested.connect(
+            lambda: self._spawn(self.connect_diagnostic_local(*home.connection_options()))
         )
         diagnostics.operation_requested.connect(
             lambda operation: self._spawn(self.run_hardware_diagnostic(operation))
@@ -197,6 +206,22 @@ class StudioController(QObject):
         self, board_count: int = 1, sample_rate_hz: int = 250, gain_code: int = 6
     ) -> None:
         await self.connect_real(board_count, sample_rate_hz, gain_code, destination="diagnostics")
+
+    async def connect_local(
+        self, board_count: int = 1, sample_rate_hz: int = 250,
+        gain_code: int = 6, destination: str = "live"
+    ) -> None:
+        """Connect to the acquisition process on this same Raspberry Pi."""
+        await self._connect(
+            LocalPiTransport(),
+            SessionConfig(board_count, sample_rate_hz, gain_code=gain_code),
+            destination=destination,
+        )
+
+    async def connect_diagnostic_local(
+        self, board_count: int = 1, sample_rate_hz: int = 250, gain_code: int = 6
+    ) -> None:
+        await self.connect_local(board_count, sample_rate_hz, gain_code, destination="diagnostics")
 
     async def connect_diagnostic_bluetooth(
         self, board_count: int = 1, sample_rate_hz: int = 250, gain_code: int = 6
@@ -384,7 +409,10 @@ class StudioController(QObject):
                     # _connect owns handshake failures and must finish cleanup
                     # before presenting a modal error dialog.
                     continue
-                if isinstance(session.transport, WiFiTransport) and session.stats.valid_frames > 0:
+                can_reconnect = isinstance(
+                    session.transport, (WiFiTransport, LocalPiTransport)
+                ) and session.stats.valid_frames > 0
+                if can_reconnect:
                     if not self._reconnecting:
                         self._spawn(self._attempt_reconnect(session))
                 else:

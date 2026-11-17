@@ -50,11 +50,12 @@ def colors(app: QApplication | None = None) -> dict[str, str]:
 
 def stylesheet(app: QApplication) -> str:
     c = colors(app)
-    font_family = (
-        "'Microsoft YaHei UI', 'Microsoft YaHei', 'Segoe UI'"
-        if sys.platform == "win32"
-        else "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC'"
-    )
+    if sys.platform == "win32":
+        font_family = "'Microsoft YaHei UI', 'Microsoft YaHei', 'Segoe UI'"
+    elif sys.platform == "darwin":
+        font_family = "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC'"
+    else:
+        font_family = "'Noto Sans CJK SC', 'Droid Sans Fallback', 'Noto Sans', 'DejaVu Sans'"
     return f"""
     * {{ font-family: {font_family}; }}
     QMainWindow, QWidget#AppRoot {{ background: {c["window"]}; color: {c["text"]}; }}

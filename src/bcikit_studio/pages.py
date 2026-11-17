@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -67,6 +68,7 @@ class ActionCard(QFrame):
 class HomePage(QWidget):
     connect_real = Signal(int, int, int)
     connect_bluetooth = Signal(int, int, int)
+    connect_local = Signal(int, int, int)
     open_history = Signal()
     open_diagnostics = Signal()
     open_session = Signal(Path)
@@ -113,10 +115,17 @@ class HomePage(QWidget):
         config_layout.addSpacing(12)
         config_layout.addWidget(config_note, 1)
         cards = QHBoxLayout()
+        self.local_card = ActionCard(
+            "▣",
+            "树莓派本机",
+            "连接同机采集服务；人体采集须先完成供电隔离。",
+            "连接本机设备",
+        )
+        self.local_card.setVisible(sys.platform.startswith("linux"))
         self.real_card = ActionCard(
             "⌁",
             "Wi‑Fi 连接",
-            "先在 macOS Wi-Fi 中连接 OpenBCI-XXXX，再由软件完成配置。",
+            "先在系统 Wi‑Fi 中连接 OpenBCI-XXXX，再由软件完成配置。",
             "开始连接",
         )
         self.bluetooth_card = ActionCard(
@@ -134,7 +143,11 @@ class HomePage(QWidget):
         self.bluetooth_card.clicked.connect(
             lambda: self.connect_bluetooth.emit(*self.connection_options())
         )
+        self.local_card.clicked.connect(
+            lambda: self.connect_local.emit(*self.connection_options())
+        )
         history.clicked.connect(self.open_history)
+        cards.addWidget(self.local_card)
         cards.addWidget(self.real_card)
         cards.addWidget(self.bluetooth_card)
         cards.addWidget(history)
@@ -195,6 +208,7 @@ class HomePage(QWidget):
         self.gain_combo.setEnabled(not connecting)
         self.real_card.action.setEnabled(not connecting)
         self.bluetooth_card.action.setEnabled(not connecting)
+        self.local_card.action.setEnabled(not connecting)
         self.connection_status.setVisible(connecting)
         self.connection_status.setText(detail or "正在连接并校验设备配置…")
 
@@ -205,6 +219,7 @@ class DiagnosticsPage(QWidget):
     back_requested = Signal()
     connect_real_requested = Signal()
     connect_bluetooth_requested = Signal()
+    connect_local_requested = Signal()
     operation_requested = Signal(str)
     open_live_requested = Signal()
     disconnect_requested = Signal()
@@ -252,6 +267,10 @@ class DiagnosticsPage(QWidget):
         self.real_connect_button.clicked.connect(self.connect_real_requested)
         self.bluetooth_connect_button = QPushButton("蓝牙连接")
         self.bluetooth_connect_button.clicked.connect(self.connect_bluetooth_requested)
+        self.local_connect_button = QPushButton("连接树莓派本机")
+        self.local_connect_button.clicked.connect(self.connect_local_requested)
+        self.local_connect_button.setVisible(sys.platform.startswith("linux"))
+        connection_layout.addWidget(self.local_connect_button)
         connection_layout.addWidget(self.real_connect_button)
         connection_layout.addWidget(self.bluetooth_connect_button)
         connection_layout.addStretch()
@@ -301,6 +320,7 @@ class DiagnosticsPage(QWidget):
         self._connected = connected
         self.real_connect_button.setVisible(not connected)
         self.bluetooth_connect_button.setVisible(not connected)
+        self.local_connect_button.setVisible(not connected and sys.platform.startswith("linux"))
         self.live_button.setVisible(connected)
         self.disconnect_button.setVisible(connected)
         for button in self.action_buttons.values():
@@ -322,6 +342,7 @@ class DiagnosticsPage(QWidget):
         """Disable both connection choices while discovery or setup is in progress."""
         self.real_connect_button.setEnabled(not connecting)
         self.bluetooth_connect_button.setEnabled(not connecting)
+        self.local_connect_button.setEnabled(not connecting)
         if detail:
             self.state_label.setText(detail)
 

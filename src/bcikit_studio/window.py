@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from contextlib import suppress
 from datetime import datetime
 from html import escape
@@ -43,7 +44,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("BCIKit Studio")
         self.setMinimumSize(1060, 720)
         self.resize(1440, 900)
-        icon_path = files("bcikit_studio.resources").joinpath("BCIKitStudio.icns")
+        icon_name = "BCIKitStudio.icns" if sys.platform == "darwin" else "logo.svg"
+        icon_path = files("bcikit_studio.resources").joinpath(icon_name)
         self.setWindowIcon(QIcon(str(icon_path)))
         self.controller = None
         root = QWidget()

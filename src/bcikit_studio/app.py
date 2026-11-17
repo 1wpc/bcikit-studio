@@ -24,7 +24,8 @@ def build_application() -> tuple[QApplication, MainWindow, StudioController]:
     app.setApplicationName("BCIKit Studio")
     app.setOrganizationName("BCIKit")
     app.setApplicationVersion(__version__)
-    app.setWindowIcon(QIcon(str(files("bcikit_studio.resources").joinpath("BCIKitStudio.icns"))))
+    icon_name = "BCIKitStudio.icns" if sys.platform == "darwin" else "logo.svg"
+    app.setWindowIcon(QIcon(str(files("bcikit_studio.resources").joinpath(icon_name))))
     configure_app(app)
     window = MainWindow()
     controller = StudioController(window)

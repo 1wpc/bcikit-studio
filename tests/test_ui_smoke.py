@@ -85,6 +85,21 @@ def test_home_exposes_a_separate_bluetooth_connection_entry(qtbot):
     assert requests == [(1, 250, 6)]
 
 
+def test_local_pi_entry_reuses_the_acquisition_configuration(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    home = window.home
+    requests = []
+    home.board_combo.setCurrentIndex(1)
+    home.gain_combo.setCurrentIndex(0)
+    home.connect_local.connect(lambda boards, rate, gain: requests.append((boards, rate, gain)))
+
+    home.local_card.action.click()
+
+    assert requests == [(2, 250, 0)]
+    assert hasattr(window.hardware_diagnostics, "connect_local_requested")
+
+
 def test_shipped_connection_and_diagnostics_pages_do_not_expose_virtual_devices(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)

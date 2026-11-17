@@ -10,11 +10,11 @@ It is **not** a medical device and does not provide medical diagnosis.
 ## What is included
 
 - Chinese-first PySide6 desktop UI with live 8--32 channel visualization.
-- BCIKit Wi-Fi TCP and BLE v1 transports.
+- BCIKit Wi-Fi TCP, BLE v1, and Raspberry Pi 5 same-machine TCP transports.
 - Raw-frame recording, markers, replay, CSV, and BDF+ export.
 - Protocol specifications, cross-language test vectors, and a small Python
   reference SDK.
-- macOS packaging script; Windows source-build instructions.
+- macOS and Linux ARM64 packaging scripts; Windows source-build instructions.
 
 Firmware, PCB/hardware design files, private development history, and the
 project website are deliberately not part of this repository.
@@ -46,6 +46,11 @@ a Windows `.exe`, or the reverse.
   [user guide](docs/BCIKit_Studio_User_Guide.md#42-windows-exe). A signed
   Windows installer is not currently provided, so validate the built
   application on a separate Windows machine before distribution.
+- **Raspberry Pi OS 64-bit:** with the matching BCIKit Pi 5 acquisition service
+  running on the same device, run `./scripts/package_linux_aarch64.sh` on the
+  Pi. The script uses Nuitka directly for compatibility with the Bookworm Qt
+  wheel. The standalone directory is `dist/linux-aarch64/main.dist/`; keep all
+  its files together. See the [local workstation guide](docs/BCIKit_Studio_User_Guide.md#43-树莓派-5-本机工作站).
 
 ## Development checks
 
